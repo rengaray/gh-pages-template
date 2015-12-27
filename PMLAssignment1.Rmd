@@ -1,0 +1,288 @@
+---
+title: "Coursera Practical Machine Learning Project"
+author: "rengaray"
+date: "December 27, 2015"
+output: html_document
+---
+
+###Practical Machine Learning Course Project  
+###Synopsis  
+
+Based on the study conducted on 6 participants in a dumbell lifting exercise as reported in the following publication  
+
+*Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.* 
+
+We are to predict the manner in which they did the exercise categorised into five ways as described in the study as follows:  
+1. **Class A** - According to specification  
+2. **Class B** - Throwing the elbow to the front  
+3. **Class C** - Lifting the dumbbel only halfway  
+4. **Class D** - Lowering the dumbbel only halfway  
+5. **Class E** - Throwing the hips to the front.    
+Class A is the specified way to execute the exercise while the rest are common mistakes.  
+
+Two sets of data are made available for training and testing purposes. From the following URLs:  
+For Training - *https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv*  
+For Testing - *https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv*  
+
+As the outcome , the prediction model is to be run against the test data to predict the outcome of 20 different cases.  
+
+The following stages as described in "Components of a Predictor" shall be followed in the following sections:  
+1. Question  
+2. Input Data  
+3. Features  
+4. Algorithm  
+5. Evaluation  
+
+###Question  
+By processing the gathered data from accelerometers on the belt, forearm, arm, and dumbbell, as presented in the data set above, can the appropriate activity class(A-E) be predicted?  
+To help with the prediction model and its representation, the following libraries shall be included.Please be advised of possible dependent libraries or packages needed, such as GTK+ to use rattle library.  
+```{r, echo=TRUE}
+# Loading of required libraries
+library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+```
+###Input Data  
+
+We import the training and test data from the URLs above and verify if test and training column names are identical.  
+```{r, echo=TRUE}
+url_raw_training <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+file_dest_training <- "pml-training.csv"
+#download.file(url=url_raw_training, destfile=file_dest_training, method="curl")
+url_raw_testing <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+file_dest_testing <- "pml-testing.csv"
+#download.file(url=url_raw_testing, destfile=file_dest_testing, method="curl")
+
+# Import the data treating empty values as NA.
+df_training <- read.csv(file_dest_training, na.strings=c("NA",""), header=TRUE)
+colnames_train <- colnames(df_training)
+df_testing <- read.csv(file_dest_testing, na.strings=c("NA",""), header=TRUE)
+colnames_test <- colnames(df_testing)
+
+# Verify that the column names (excluding classe and problem_id) are identical in the training and test set.
+all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_train)-1])
+```  
+
+###Features
+The outcome above states the schema for training and testing sets are identical, except the last column,classe which represents the class, in test data  problem id is given instead. Any NA columns and extra columns not in use is eliminated to reduce the data set size. Only relevant columns are retained.  
+```{r, echo=TRUE}
+# Count the number of non-NAs in each col.
+nonNAs <- function(x) {
+    as.vector(apply(x, 2, function(x) length(which(!is.na(x)))))
+}
+
+# Build vector of missing data or NA columns to drop.
+colcnts <- nonNAs(df_training)
+drops <- c()
+for (cnt in 1:length(colcnts)) {
+    if (colcnts[cnt] < nrow(df_training)) {
+        drops <- c(drops, colnames_train[cnt])
+    }
+}
+
+# Drop NA data and the first 7 columns as they're unnecessary for predicting.
+df_training <- df_training[,!(names(df_training) %in% drops)]
+df_training <- df_training[,8:length(colnames(df_training))]
+
+df_testing <- df_testing[,!(names(df_testing) %in% drops)]
+df_testing <- df_testing[,8:length(colnames(df_testing))]
+
+# Show remaining columns.
+colnames(df_training)
+```
+
+Since raw data is provided, Level 1 processing is not necessary, Level 2 (covariates to new covariates) processing is applicable.
+
+The following checks for covariates that have virtually no variability.
+
+```{r, echo=TRUE}
+nsv <- nearZeroVar(df_training, saveMetrics=TRUE)
+nsv
+```
+
+The outcome shows all of the near zero variance variable are FALSE. as such there is no need for elimination of covariates.
+
+###Algorithm 
+The training set (19,622 entries) given is relatively large as compared to testing set (20 entries). For our purpose, the training data is divided into four equal data set ,each of which is split into training (60%) and testing (40%) respectively.
+Steps taken are as follows:
+```{r, echo=TRUE}
+# Divide the given training set into 4 roughly equal sets.
+set.seed(666)
+ids_small <- createDataPartition(y=df_training$classe, p=0.25, list=FALSE)
+df_small1 <- df_training[ids_small,]
+df_remainder <- df_training[-ids_small,]
+set.seed(666)
+ids_small <- createDataPartition(y=df_remainder$classe, p=0.33, list=FALSE)
+df_small2 <- df_remainder[ids_small,]
+df_remainder <- df_remainder[-ids_small,]
+set.seed(666)
+ids_small <- createDataPartition(y=df_remainder$classe, p=0.5, list=FALSE)
+df_small3 <- df_remainder[ids_small,]
+df_small4 <- df_remainder[-ids_small,]
+# Divide each of these 4 sets into training (60%) and test (40%) sets.
+set.seed(666)
+inTrain <- createDataPartition(y=df_small1$classe, p=0.6, list=FALSE)
+df_small_training1 <- df_small1[inTrain,]
+df_small_testing1 <- df_small1[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small2$classe, p=0.6, list=FALSE)
+df_small_training2 <- df_small2[inTrain,]
+df_small_testing2 <- df_small2[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small3$classe, p=0.6, list=FALSE)
+df_small_training3 <- df_small3[inTrain,]
+df_small_testing3 <- df_small3[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small4$classe, p=0.6, list=FALSE)
+df_small_training4 <- df_small4[inTrain,]
+df_small_testing4 <- df_small4[-inTrain,]
+
+```
+
+As per my understanding and outcome of discussions on the study above, two different algorithms (as available in caret package) was explored:  
+1. Classification Trees (method=rpart)  
+2. Random Forests (method=rf)
+
+###Parameters 
+I decided to try classification trees “out of the box” and then introduce preprocessing and cross validation.
+
+While I also considered applying “out of the box” random forest models, some of the horror stories contributed to the coursera discussion forums regarding the lengthy processing times for random forest models convinced me to only attempt random forests with cross validation and, possibly, preprocessing.
+
+###Evaluation 
+
+####Classification Tree 
+
+First the "out of the box" classification was done:
+```{r echo=TRUE}
+# Train on training set 1 of 4 with no extra features.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ ., data = df_small_training1, method="rpart")
+print(modFit, digits=3)
+print(modFit$finalModel, digits=3)
+fancyRpartPlot(modFit$finalModel)
+
+# Run against testing set 1 of 4 with no extra features.
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+```
+
+The accuracy rate was considerably low at *0.5584*, thus incorporated preprocessing and cross validation.
+
+```{r echo=TRUE}
+# Train on training set 1 of 4 with only preprocessing.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ .,  preProcess=c("center", "scale"), data = df_small_training1, method="rpart")
+print(modFit, digits=3)
+```
+
+```{r echo=TRUE}
+# Train on training set 1 of 4 with only cross validation.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ .,  trControl=trainControl(method = "cv", number = 4), data = df_small_training1, method="rpart")
+print(modFit, digits=3)
+
+# Train on training set 1 of 4 with both preprocessing and cross validation.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ .,  preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data = df_small_training1, method="rpart")
+print(modFit, digits=3)
+
+# Run against testing set 1 of 4 with both preprocessing and cross validation.
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+
+```
+The impact of incorporating both preprocessing and cross validation appeared to show some minimal improvement (accuracy rate rose from 0.531 to 0.552 against training sets). However, when run against the corresponding testing set, the accuracy rate was identical (*0.5584*) for both the “out of the box” and the preprocessing/cross validation methods.
+
+####Random Forest 
+Preprocessing was assessed to determine the impact.
+
+```{r echo=TRUE}
+# Train on training set 1 of 4 with only cross validation.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ ., method="rf", trControl=trainControl(method = "cv", number = 4), data=df_small_training1)
+print(modFit, digits=3)
+
+# Run against testing set 1 of 4.
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+
+# Run against 20 testing set provided.
+print(predict(modFit, newdata=df_testing))
+
+# Train on training set 1 of 4 with only both preprocessing and cross validation.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=df_small_training1)
+print(modFit, digits=3)
+
+# Run against testing set 1 of 4.
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+
+# Run against 20 testing set provided.
+print(predict(modFit, newdata=df_testing))
+
+```
+
+Preprocessing actually lowered the accuracy rate from 0.955 to 0.954 against the training set. However, when run against the corresponding set, the accuracy rate rose from 0.9689 to 0.9714 with the addition of preprocessing. Thus I decided to apply both preprocessing and cross validation to the remaining 3 data sets.
+
+```{r echo=TRUE}
+# Train on training set 2 of 4 with only cross validation.
+set.seed(666)
+modFit <- train(df_small_training2$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=df_small_training2)
+print(modFit, digits=3)
+
+# Run against testing set 2 of 4.
+predictions <- predict(modFit, newdata=df_small_testing2)
+print(confusionMatrix(predictions, df_small_testing2$classe), digits=4)
+
+# Run against 20 testing set provided.
+print(predict(modFit, newdata=df_testing))
+
+# Train on training set 3 of 4 with only cross validation.
+set.seed(666)
+modFit <- train(df_small_training3$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=df_small_training3)
+print(modFit, digits=3)
+
+# Run against testing set 3 of 4.
+predictions <- predict(modFit, newdata=df_small_testing3)
+print(confusionMatrix(predictions, df_small_testing3$classe), digits=4)
+
+# Run against 20 testing set provided.
+print(predict(modFit, newdata=df_testing))
+
+# Train on training set 4 of 4 with only cross validation.
+set.seed(666)
+modFit <- train(df_small_training4$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=df_small_training4)
+print(modFit, digits=3)
+
+# Run against testing set 4 of 4.
+predictions <- predict(modFit, newdata=df_small_testing4)
+print(confusionMatrix(predictions, df_small_testing4$classe), digits=4)
+
+# Run against 20 testing set provided.
+print(predict(modFit, newdata=df_testing))
+
+```
+
+####Out of Sample Error
+The out of sample error is the “error rate you get on new data set.” In my case, it's the error rate after running the predict() function on the 4 testing sets:  
+
+* Random Forest (preprocessing and cross validation) Testing Set 1: 1 - .9714 = 0.0286 
+* Random Forest (preprocessing and cross validation) Testing Set 2: 1 - .9634 = 0.0366 
+* Random Forest (preprocessing and cross validation) Testing Set 3: 1 - .9655 = 0.0345 
+* Random Forest (preprocessing and cross validation) Testing Set 4: 1 - .9563 = 0.0437 
+
+Since each testing set is roughly of equal size, I decided to average the out of sample error rates derived by applying the random forest method with both preprocessing and cross validation against test sets 1-4 yielding a predicted out of sample rate of 0.03585.
+
+###Conclusion
+I received three separate predictions by appling the 4 models against the actual 20 item training set:
+
+A) Accuracy Rate 0.0286 Predictions: B A A A A E D B A A B C B A E E A B B B 
+
+B) Accuracy Rates 0.0366 and 0.0345 Predictions: B A B A A E D B A A B C B A E E A B B B 
+
+C) Accuracy Rate 0.0437 Predictions: B A B A A E D D A A B C B A E E A B B B 
+
+Since options A and B above only differed for item 3 (A for option A, B for option B), I subimitted one value for problems 1-2 and 4-20, while I submitted two values for problem 3.
